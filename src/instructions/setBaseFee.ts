@@ -4,7 +4,7 @@ import { Instruction } from '../constants/program'
 import { FeeBpsInstr } from '../codec/schemas'
 import { deriveSettingsPda } from './pda'
 
-export function buildSetBaseFeInstruction(
+export function buildSetBaseFeeInstruction(
   programId: PublicKey,
   authority: PublicKey,
   feeBps: number,

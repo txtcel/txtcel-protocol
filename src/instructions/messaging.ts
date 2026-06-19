@@ -9,7 +9,7 @@ import {
   CONTENT_SLOTS,
   DESIRED_CANDIDATES,
   EXTEND_THRESHOLD,
-  MAX_TEXT_LEN,
+  MAX_BODY_LEN,
   TX_POLL_INTERVAL_MS,
   TX_POLL_TIMEOUT_MS,
 } from '../constants/program'
@@ -40,8 +40,8 @@ function ensureTextBytes(text: string) {
     throw new Error('Text must not be empty')
   }
 
-  if (bytes.length > MAX_TEXT_LEN) {
-    throw new Error(`Text is too long (max ${MAX_TEXT_LEN} bytes)`)
+  if (bytes.length > MAX_BODY_LEN) {
+    throw new Error(`Body is too long (max ${MAX_BODY_LEN} bytes)`)
   }
 
   return bytes
@@ -67,7 +67,7 @@ const CANDIDATE_SIZE = 4 + 1 // allocSeq + slot in instruction data
 const ACCOUNT_KEY_SIZE = 32
 const FILL_SLOT_BASE_ACCOUNTS = 6 // payer, thread, settings, treasury, author_fee, system
 const FILL_SLOT_ACCESS_ACCOUNTS = 2 // access + per-wallet entry (mandatory)
-const CONTENT_NODE_FIXED_SIZE = 63 // ContentNode size excluding text bytes
+const CONTENT_NODE_FIXED_SIZE = 89 // ContentNode size excluding body bytes: header (1+4+1+32+32+8+4+1=83) + kind u16 (2) + Vec len prefix (4)
 const MAX_FEE_SLIPPAGE_NUM = 2n // tolerate up to 2x the expected fee
 const APPEND_INSTR_ACCOUNTS = 7 // payer, content, thread, settings, treasury, author_fee, system
 const APPEND_TX_OVERHEAD =

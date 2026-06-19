@@ -1,6 +1,6 @@
 import { PublicKey, SystemProgram, TransactionInstruction } from '@solana/web3.js'
 import { Buffer } from 'buffer'
-import { Instruction } from '../constants/program'
+import { Instruction, MAX_TITLE_LEN } from '../constants/program'
 import { CreateRootAllocInstr } from '../codec/schemas'
 import { deriveAllocPda, deriveSettingsPda, deriveThreadPda, deriveTreasuryShardPda, randomTreasuryShard } from './pda'
 
@@ -12,6 +12,9 @@ export function buildCreateRootAllocInstruction(
   title: string = '',
 ) {
   const titleBytes = new TextEncoder().encode(title)
+  if (titleBytes.length > MAX_TITLE_LEN) {
+    throw new Error(`Title is too long (max ${MAX_TITLE_LEN} bytes)`)
+  }
   // The thread account is a fresh keypair whose pubkey is the channel identity
   // (`seed` == its 32 address bytes). It signs its own creation, so there is no
   // global counter and channel creation has no shared writable account.
