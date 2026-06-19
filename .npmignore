@@ -1,0 +1,6 @@
+# Publish only the built output (see package.json "files").
+src/
+tsup.config.ts
+tsconfig.json
+.gitignore
+*.log
