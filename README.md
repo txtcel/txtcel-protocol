@@ -13,6 +13,10 @@ framework-agnostic wrapper around the on-chain protocol. It gives you:
 No React, no wallet adapter — just `@solana/web3.js` primitives, so it works in
 the browser, in Node scripts and in tests.
 
+> **Note:** This README is LLM-generated from the source and reviewed by hand.
+> The code is the source of truth. A condensed, agent-oriented overview lives in
+> [`llms.txt`](./llms.txt).
+
 ## Install
 
 ```bash

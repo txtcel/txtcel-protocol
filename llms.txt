@@ -1,0 +1,76 @@
+# @txtcel/protocol
+
+> TypeScript SDK for the Txtcel Solana program: a thin, framework-agnostic
+> wrapper over `@solana/web3.js` (v1, peer dependency). Provides instruction
+> builders, high-level messaging helpers, PDA derivation, borsh/zorsh account
+> codecs, account loaders, and constants/types. No React, no wallet adapter.
+> Builders take `programId` explicitly, so the same package works across
+> clusters and deployments.
+
+This file is generated for LLM/agent consumption. The code is the source of
+truth; this file and the README are kept in sync by hand.
+
+## Entry point
+- src/index.ts re-exports everything from the package root.
+
+## The `seed` concept
+- Most functions take `seed: Uint8Array` = the thread's 32-byte identity (the thread account's pubkey bytes).
+- `createRootAlloc` returns it; for an existing thread use `new PublicKey(threadPda).toBytes()`.
+- All child PDAs (alloc/content/access/likes/author-fee) derive from it.
+
+## High-level helpers
+- createRootAlloc(connection, programId, payer, messageFee?, title?, onSent?) -> { signature, seed, threadPda, allocPda }
+- createRootAllocWithWallet(connection, programId, wallet, messageFee?, title?, onSent?) -> same, wallet-adapter signer
+- buildSendMessageTransactions(connection, programId, payerKey, seed, text, replyTo?) -> Transaction[]  (recommended; FillSlot + AppendContent chunks)
+- buildSendMessageTransaction(...) -> deprecated; first transaction only
+- type WalletSigner = { publicKey: PublicKey; signTransaction: (tx) => Promise<Transaction> }
+
+## Instruction builders (build*Instruction)
+Each returns a TransactionInstruction and mirrors an on-chain instruction 1:1.
+- buildCreateRootAllocInstruction, buildFillSlotInstruction(opts), buildPrepareAllocInstruction
+- buildAppendContentInstruction, buildLikeContentInstruction, buildCloseAccountInstruction
+- buildSweepTreasuryInstruction, buildSweepAuthorFeesInstruction
+- buildInitSettingsInstruction, buildSetTreasuryInstruction, buildSetAdminInstruction
+- buildSetFeeInstruction(kind: FeeKind) where FeeKind = 'base' | 'authorCut' | 'entryCut' | 'likeCut'
+- buildSetBaseFeeInstruction, buildSetAuthorFeeCutInstruction, buildSetEntryCutInstruction, buildSetLikeCutInstruction
+- buildSetMessageFeeInstruction, buildSetLikeFeeInstruction, buildSetEntryFeeInstruction
+- buildInitThreadAccessInstruction, buildSetThreadAccessInstruction
+- buildAddToWhitelistInstruction, buildRemoveFromWhitelistInstruction
+- buildAddToBlacklistInstruction, buildRemoveFromBlacklistInstruction
+- buildAddToFeeWhitelistInstruction, buildRemoveFromFeeWhitelistInstruction
+- buildRequestAccessInstruction
+
+buildFillSlotInstruction takes an options object: { programId, payer, seed, candidates,
+treasuryShardIdx, authorFeeShardIdx, bodyBytes, kind?, maxFee, extendInfo?, replyAllocSeq?, replySlot? }.
+It appends the mandatory access + per-wallet entry PDAs at fixed positions.
+
+## PDA derivation (derive*Pda)
+- deriveSettingsPda, deriveThreadPda, deriveAllocPda, deriveContentPda
+- deriveAccessPda, deriveAccessEntryPda, deriveLikesPda
+- deriveTreasuryShardPda, deriveAuthorFeePda, deriveProgramDataPda
+- randomTreasuryShard(), randomAuthorFeeShard(); seed encoders u16Seed(n)/u32Seed(n)
+
+## Loaders and codecs
+- Loaders (fetch + validate + decode): loadThreadNode/loadAllocNode/loadContentNode (throw if missing),
+  loadProgramSettings/loadAllocLikes (return null), loadThreadAccess, loadAccessEntries.
+- Decoders (Uint8Array -> typed data): decodeContent/decodeAlloc/decodeThread/decodeSettings/
+  decodeThreadAccess/decodeAccessEntry/decodeAllocLikes. Raw zorsh schemas in codec/schemas.ts.
+
+## Constants
+- Tags: TAG_CONTENT/TAG_ALLOC/TAG_THREAD/TAG_SETTINGS/TAG_ACCESS/TAG_LIKES/TAG_ACCESS_ENTRY
+- Content kinds: KIND_TEXT. Access status: ACCESS_ALLOWED/ACCESS_DENIED/ACCESS_FEE_EXEMPT
+- Layout: CHILDREN_LEN, NEXT_ALLOC_INDEX, CONTENT_SLOTS, EXTEND_THRESHOLD, MAX_BODY_LEN, MAX_TITLE_LEN, INDEX_NONE, PUBKEY_SIZE
+- Shards: N_TREASURY_SHARDS, N_AUTHOR_FEE_SHARDS
+- Seeds: SEED_SETTINGS/SEED_ALLOC/SEED_CONTENT/SEED_ACCESS/SEED_LIKES/SEED_TREASURY_SHARD/SEED_AUTHOR_FEE/SEED_ACL
+- Misc: Instruction (variant index map; e.g. Instruction.FillSlot === 1), BPF_LOADER_UPGRADEABLE_ID, DESIRED_CANDIDATES, BPS_DIVISOR, TX_POLL_TIMEOUT_MS, TX_POLL_INTERVAL_MS
+
+## Build
+- npm install; npm run build (tsup -> ESM + CJS + .d.ts); npm run typecheck; npm publish
+
+## Conventions for agents
+- Code is the source of truth; README.md and llms.txt are generated.
+- programId is always explicit; the SDK hard-codes no address.
+- Keep seeds, tags and instruction indices in sync with the on-chain program (txtcel-program).
+
+## More
+- README.md: full API reference, recipes, types and constants.
