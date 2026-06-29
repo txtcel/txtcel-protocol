@@ -1,6 +1,6 @@
 {
   "name": "@txtcel/protocol",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "description": "TypeScript SDK for the Txtcel Solana program: instruction builders, account codecs and PDA derivation.",
   "license": "MIT",
   "repository": {

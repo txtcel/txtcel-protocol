@@ -86,20 +86,42 @@ generated thread keypair is an extra signer.
 
 #### `buildSendMessageTransactions(connection, programId, payerKey, seed, text, replyTo?)`
 
-The recommended way to post a message. Returns an **array** of `Transaction`s:
-the first is a `FillSlot`, followed by `AppendContent` txs when `text` is larger
-than one transaction. It:
+The recommended way to post a message. Returns an **array** of POST-ONLY
+`Transaction`s: the first is a `FillSlot`, followed by `AppendContent` txs when
+`text` is larger than one transaction. It never co-bundles `prepare_alloc`
+(growing the chain is the separate `buildExtendAllocTransaction`). It:
 
-- loads the thread + last alloc, scans for free content slots (up to
-  `DESIRED_CANDIDATES = 3`, looking into the next alloc if needed),
-- shuffles candidates to reduce write contention,
-- decides whether to **auto-extend** the alloc chain (`EXTEND_THRESHOLD`),
+- loads the thread (`N = thread.lastAllocSeq`),
+- gathers free content slots from a **rolling 2-page window** — the previous
+  page `N-1` (when it exists) plus the tail page `N` — in one
+  `getMultipleAccountsInfo`,
+- shuffles that pool and picks up to `DESIRED_CANDIDATES = 3` to reduce write
+  contention,
 - computes a `maxFee` slippage cap (≈ 2× base fee + message fee),
 - picks random treasury/author-fee shards.
 
-`replyTo?: { allocSeq: number; slot: number } | null` threads the message as a
-reply. Throws `'No free slots in thread'` / `'Text must not be empty'` /
+Liveness fallback: if the whole 2-page window is full (rare burst), it
+co-bundles `prepare_alloc(N)` before a `fill_slot` targeting page `N+1`, so a
+post is always possible. `replyTo?: { allocSeq: number; slot: number } | null`
+threads the message as a reply. Throws `'Text must not be empty'` /
 `'Body is too long'`.
+
+#### `buildExtendAllocTransaction(connection, programId, payerKey, seed)`
+
+Returns a **best-effort** `prepare_alloc(N)` transaction that grows the alloc
+chain when the tail page `N = thread.lastAllocSeq` has `filled >=
+EXTEND_THRESHOLD` slots, else `null`. Decoupled from posting: fire it alongside
+a post and **ignore its failure** (e.g. `InvalidAllocSeq` when another sender
+already extended).
+
+#### `sendMessageWithWallet(connection, programId, wallet, seed, text, replyTo?, onSent?)`
+
+Posts a message with a wallet using a **single approval**: builds the post txs
+plus the best-effort extend tx, signs them all in one `signAllTransactions`
+call (falling back to per-tx `signTransaction`), then sends them as independent
+transactions — `fill_slot` then `append_content` chunks (confirmed), and the
+extend tx best-effort (its failure is swallowed). Returns
+`{ signatures, extendSignature }`.
 
 #### `buildSendMessageTransaction(...)` — *deprecated*
 
@@ -108,7 +130,7 @@ chunked sending.
 
 #### `type WalletSigner`
 
-`{ publicKey: PublicKey; signTransaction: (tx: Transaction) => Promise<Transaction> }`
+`{ publicKey: PublicKey; signTransaction: (tx) => Promise<Transaction>; signAllTransactions?: (txs) => Promise<Transaction[]> }`
 
 ---
 
@@ -148,6 +170,8 @@ semantics, fees and errors).
 | `buildAddToFeeWhitelistInstruction(programId, authority, seed, wallet)` | `AddToFeeWhitelist` | thread admin. |
 | `buildRemoveFromFeeWhitelistInstruction(programId, authority, seed, wallet)` | `RemoveFromFeeWhitelist` | thread admin. |
 | `buildRequestAccessInstruction(programId, payer, seed)` | `RequestAccess` | pay entry fee to join. |
+| `buildSubscribeInstruction({ programId, user, seed })` | `Subscribe` | follow a channel; no fee, user pays registry/shard rent. |
+| `buildUnsubscribeInstruction({ programId, user, seed })` | `Unsubscribe` | unfollow a channel; refunds freed registry rent. |
 
 #### `buildFillSlotInstruction(opts)` options
 
@@ -162,15 +186,14 @@ semantics, fees and errors).
   bodyBytes: Uint8Array          // opaque payload; UTF-8 for the default text kind
   kind?: number                  // message-type discriminator, defaults to KIND_TEXT
   maxFee: bigint                 // slippage cap on base + author fee
-  extendInfo?: { currentAllocPda: PublicKey; newAllocPda: PublicKey }
   replyAllocSeq?: number | null
   replySlot?: number | null
 }
 ```
 
 The builder appends the mandatory `access` + per-wallet `entry` PDAs (derived
-for `payer`) at fixed positions, and the two extend accounts when `extendInfo`
-is set.
+for `payer`) at fixed positions. `fill_slot` is element-only and never grows the
+alloc chain — linking a new page is the separate `prepare_alloc` instruction.
 
 #### `type FeeKind`
 
@@ -195,6 +218,9 @@ All mirror the program's seeds exactly (see the program README PDA table).
 | `deriveTreasuryShardPda(programId, shard)` | treasury vault shard PDA. |
 | `deriveAuthorFeePda(programId, seed, shard)` | author-fee vault shard PDA. |
 | `deriveProgramDataPda(programId)` | BPF loader ProgramData account (holds upgrade authority). |
+| `deriveFollowRegistryPda(programId, owner)` | per-wallet `FollowRegistry` PDA. |
+| `deriveFollowerShardPda(programId, seed, shard)` | per-channel `FollowerShard` counter PDA. |
+| `followerShardIndex(owner)` | shard index for a wallet (`owner.toBytes()[0] % N_FOLLOWER_SHARDS`). |
 | `randomTreasuryShard()` | random index in `[0, N_TREASURY_SHARDS)`. |
 | `randomAuthorFeeShard()` | random index in `[0, N_AUTHOR_FEE_SHARDS)`. |
 
@@ -216,6 +242,8 @@ call.
 | `loadThreadAccess(connection, programId, accessKey)` | `ThreadAccessData` | throws. |
 | `loadAllocLikes(connection, programId, pubkey)` | `AllocLikesData \| null` | returns `null`. |
 | `loadAccessEntries(connection, programId, seed)` | `{ whitelist, blacklist, feeExempt }` of base58 strings | scans program accounts by tag + seed. |
+| `loadFollowRegistry(connection, programId, owner)` | `FollowRegistryData \| null` | returns `null`. |
+| `loadFollowerCount(connection, programId, seed)` | `bigint` (sum of all follower shards) | returns `0n`. |
 
 ---
 
@@ -232,6 +260,8 @@ websocket subscription).
 - `decodeThreadAccess(pubkey, data) → ThreadAccessData`
 - `decodeAccessEntry(pubkey, data) → AccessEntryData`
 - `decodeAllocLikes(pubkey, data) → AllocLikesData`
+- `decodeFollowRegistry(pubkey, data) → FollowRegistryData`
+- `decodeFollowerShard(pubkey, data) → FollowerShardData`
 
 The raw zorsh schemas (`ContentNodeSchema`, `FillSlotInstr`, …) live in
 `codec/schemas.ts` if you need to (de)serialize manually.
@@ -257,7 +287,6 @@ type ContentNodeData = {
 
 type AllocNodeData = {
   pubkey: string; seed: Uint8Array; allocSeq: number
-  upperAllocSeq: number | null; nextAllocSeq: number | null
 }
 
 type ThreadNodeData = {
@@ -286,12 +315,13 @@ type AllocLikesData = { pubkey: string; allocSeq: number; counts: number[] }
 
 | Group | Constants |
 |-------|-----------|
-| Account tags | `TAG_CONTENT`, `TAG_ALLOC`, `TAG_THREAD`, `TAG_SETTINGS`, `TAG_ACCESS`, `TAG_LIKES`, `TAG_ACCESS_ENTRY` |
+| Account tags | `TAG_CONTENT`, `TAG_ALLOC`, `TAG_THREAD`, `TAG_SETTINGS`, `TAG_ACCESS`, `TAG_LIKES`, `TAG_ACCESS_ENTRY`, `TAG_FOLLOW_REGISTRY`, `TAG_FOLLOWER_SHARD` |
 | Content kinds | `KIND_TEXT` |
 | Access status | `ACCESS_ALLOWED`, `ACCESS_DENIED`, `ACCESS_FEE_EXEMPT` |
-| Layout sizes | `CHILDREN_LEN`, `NEXT_ALLOC_INDEX`, `CONTENT_SLOTS`, `EXTEND_THRESHOLD`, `MAX_BODY_LEN`, `MAX_TITLE_LEN`, `INDEX_NONE`, `PUBKEY_SIZE` |
-| Shards | `N_TREASURY_SHARDS`, `N_AUTHOR_FEE_SHARDS` |
-| Seeds | `SEED_SETTINGS`, `SEED_ALLOC`, `SEED_CONTENT`, `SEED_ACCESS`, `SEED_LIKES`, `SEED_TREASURY_SHARD`, `SEED_AUTHOR_FEE`, `SEED_ACL` |
+| Layout sizes | `CONTENT_SLOTS`, `EXTEND_THRESHOLD`, `MAX_BODY_LEN`, `MAX_TITLE_LEN`, `INDEX_NONE`, `PUBKEY_SIZE` |
+| Shards / follows | `N_TREASURY_SHARDS`, `N_AUTHOR_FEE_SHARDS`, `N_FOLLOWER_SHARDS`, `MAX_FOLLOWS` |
+| Fees | `MAX_FEE_CUT_BPS` (5000; on-chain max for fee cuts / base fee) |
+| Seeds | `SEED_SETTINGS`, `SEED_ALLOC`, `SEED_CONTENT`, `SEED_ACCESS`, `SEED_LIKES`, `SEED_TREASURY_SHARD`, `SEED_AUTHOR_FEE`, `SEED_ACL`, `SEED_FOLLOWS`, `SEED_FOLLOWER_COUNT` |
 | Misc | `Instruction` (variant index map), `BPF_LOADER_UPGRADEABLE_ID`, `DESIRED_CANDIDATES`, `BPS_DIVISOR`, `TX_POLL_TIMEOUT_MS`, `TX_POLL_INTERVAL_MS` |
 
 The `Instruction` object maps instruction names to their on-chain variant index

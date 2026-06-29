@@ -4,6 +4,19 @@ import { ContentNodeSchema, formatTimestamp, pubkeyToBase58 } from './schemas'
 
 const textDecoder = new TextDecoder()
 
+/**
+ * Decodes a raw content (message) account into {@link ContentNodeData}.
+ *
+ * Reply links use `INDEX_NONE` as the on-chain "no reply" sentinel and are
+ * surfaced here as `null`. `body` is opaque: text is exposed only for the
+ * default {@link KIND_TEXT} kind, while the raw bytes are always returned so
+ * callers can decode unknown/future kinds themselves.
+ *
+ * @param pubkey - The account's base58 address (carried through onto the result).
+ * @param data - The raw account data bytes.
+ * @returns The decoded content node.
+ * @throws If the tag byte is not `TAG_CONTENT`.
+ */
 export function decodeContent(pubkey: string, data: Uint8Array): ContentNodeData {
   const raw = ContentNodeSchema.deserialize(data)
   if (raw.tag !== TAG_CONTENT) throw new Error('Invalid ContentNode tag')

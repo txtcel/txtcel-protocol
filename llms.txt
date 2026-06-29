@@ -21,9 +21,11 @@ truth; this file and the README are kept in sync by hand.
 ## High-level helpers
 - createRootAlloc(connection, programId, payer, messageFee?, title?, onSent?) -> { signature, seed, threadPda, allocPda }
 - createRootAllocWithWallet(connection, programId, wallet, messageFee?, title?, onSent?) -> same, wallet-adapter signer
-- buildSendMessageTransactions(connection, programId, payerKey, seed, text, replyTo?) -> Transaction[]  (recommended; FillSlot + AppendContent chunks)
+- buildSendMessageTransactions(connection, programId, payerKey, seed, text, replyTo?) -> Transaction[]  (recommended; POST-ONLY: FillSlot + AppendContent chunks; never co-bundles prepare_alloc). Candidates come from a rolling 2-page window (pages N-1 and N, N=thread.lastAllocSeq). Liveness fallback co-bundles prepare_alloc(N)+fill_slot on page N+1 only when the window is full.
+- buildExtendAllocTransaction(connection, programId, payerKey, seed) -> Transaction | null  (best-effort prepare_alloc(N) when tail page N has filled >= EXTEND_THRESHOLD; callers fire it best-effort and MUST ignore its failure, e.g. InvalidAllocSeq)
+- sendMessageWithWallet(connection, programId, wallet, seed, text, replyTo?, onSent?) -> { signatures, extendSignature }  (single signAllTransactions approval for post txs + best-effort extend; sends fill then append chunks confirmed, extend best-effort/ignored)
 - buildSendMessageTransaction(...) -> deprecated; first transaction only
-- type WalletSigner = { publicKey: PublicKey; signTransaction: (tx) => Promise<Transaction> }
+- type WalletSigner = { publicKey: PublicKey; signTransaction: (tx) => Promise<Transaction>; signAllTransactions?: (txs) => Promise<Transaction[]> }
 
 ## Instruction builders (build*Instruction)
 Each returns a TransactionInstruction and mirrors an on-chain instruction 1:1.
@@ -39,30 +41,36 @@ Each returns a TransactionInstruction and mirrors an on-chain instruction 1:1.
 - buildAddToBlacklistInstruction, buildRemoveFromBlacklistInstruction
 - buildAddToFeeWhitelistInstruction, buildRemoveFromFeeWhitelistInstruction
 - buildRequestAccessInstruction
+- buildSubscribeInstruction(opts), buildUnsubscribeInstruction(opts) where opts = { programId, user, seed }
+  (follow/unfollow a channel; maintains the caller's FollowRegistry and the per-channel FollowerShard counter; no fee, caller pays rent only)
 
 buildFillSlotInstruction takes an options object: { programId, payer, seed, candidates,
-treasuryShardIdx, authorFeeShardIdx, bodyBytes, kind?, maxFee, extendInfo?, replyAllocSeq?, replySlot? }.
+treasuryShardIdx, authorFeeShardIdx, bodyBytes, kind?, maxFee, replyAllocSeq?, replySlot? }.
 It appends the mandatory access + per-wallet entry PDAs at fixed positions.
 
 ## PDA derivation (derive*Pda)
 - deriveSettingsPda, deriveThreadPda, deriveAllocPda, deriveContentPda
 - deriveAccessPda, deriveAccessEntryPda, deriveLikesPda
 - deriveTreasuryShardPda, deriveAuthorFeePda, deriveProgramDataPda
+- deriveFollowRegistryPda(programId, owner), deriveFollowerShardPda(programId, seed, shard), followerShardIndex(owner)
 - randomTreasuryShard(), randomAuthorFeeShard(); seed encoders u16Seed(n)/u32Seed(n)
 
 ## Loaders and codecs
 - Loaders (fetch + validate + decode): loadThreadNode/loadAllocNode/loadContentNode (throw if missing),
   loadProgramSettings/loadAllocLikes (return null), loadThreadAccess, loadAccessEntries.
+- Follow loaders: loadFollowRegistry(connection, programId, owner) -> FollowRegistryData | null,
+  loadFollowerCount(connection, programId, seed) -> bigint (sums all FollowerShard counts), loadThreadNodesBatched.
 - Decoders (Uint8Array -> typed data): decodeContent/decodeAlloc/decodeThread/decodeSettings/
-  decodeThreadAccess/decodeAccessEntry/decodeAllocLikes. Raw zorsh schemas in codec/schemas.ts.
+  decodeThreadAccess/decodeAccessEntry/decodeAllocLikes/decodeFollowRegistry/decodeFollowerShard. Raw zorsh schemas in codec/schemas.ts.
 
 ## Constants
-- Tags: TAG_CONTENT/TAG_ALLOC/TAG_THREAD/TAG_SETTINGS/TAG_ACCESS/TAG_LIKES/TAG_ACCESS_ENTRY
+- Tags: TAG_CONTENT/TAG_ALLOC/TAG_THREAD/TAG_SETTINGS/TAG_ACCESS/TAG_LIKES/TAG_ACCESS_ENTRY/TAG_FOLLOW_REGISTRY/TAG_FOLLOWER_SHARD
 - Content kinds: KIND_TEXT. Access status: ACCESS_ALLOWED/ACCESS_DENIED/ACCESS_FEE_EXEMPT
-- Layout: CHILDREN_LEN, NEXT_ALLOC_INDEX, CONTENT_SLOTS, EXTEND_THRESHOLD, MAX_BODY_LEN, MAX_TITLE_LEN, INDEX_NONE, PUBKEY_SIZE
-- Shards: N_TREASURY_SHARDS, N_AUTHOR_FEE_SHARDS
-- Seeds: SEED_SETTINGS/SEED_ALLOC/SEED_CONTENT/SEED_ACCESS/SEED_LIKES/SEED_TREASURY_SHARD/SEED_AUTHOR_FEE/SEED_ACL
-- Misc: Instruction (variant index map; e.g. Instruction.FillSlot === 1), BPF_LOADER_UPGRADEABLE_ID, DESIRED_CANDIDATES, BPS_DIVISOR, TX_POLL_TIMEOUT_MS, TX_POLL_INTERVAL_MS
+- Layout: CONTENT_SLOTS, EXTEND_THRESHOLD, MAX_BODY_LEN, MAX_TITLE_LEN, INDEX_NONE, PUBKEY_SIZE
+- Shards: N_TREASURY_SHARDS, N_AUTHOR_FEE_SHARDS, N_FOLLOWER_SHARDS; follows: MAX_FOLLOWS
+- Seeds: SEED_SETTINGS/SEED_ALLOC/SEED_CONTENT/SEED_ACCESS/SEED_LIKES/SEED_TREASURY_SHARD/SEED_AUTHOR_FEE/SEED_ACL/SEED_FOLLOWS/SEED_FOLLOWER_COUNT
+- Fees: MAX_FEE_CUT_BPS (5000; on-chain max for fee cuts / base fee)
+- Misc: Instruction (variant index map; e.g. Instruction.FillSlot === 1, Instruction.Subscribe === 27, Instruction.Unsubscribe === 28), BPF_LOADER_UPGRADEABLE_ID, DESIRED_CANDIDATES, BPS_DIVISOR, TX_POLL_TIMEOUT_MS, TX_POLL_INTERVAL_MS
 
 ## Build
 - npm install; npm run build (tsup -> ESM + CJS + .d.ts); npm run typecheck; npm publish

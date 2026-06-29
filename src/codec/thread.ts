@@ -5,6 +5,18 @@ import { ThreadNodeSchema, pubkeyToBase58 } from './schemas'
 
 const textDecoder = new TextDecoder()
 
+/**
+ * Decodes a raw thread (channel) account into {@link ThreadNodeData}.
+ *
+ * The thread is a full-address account, so its identity (`seed`, the bytes
+ * child PDAs derive from) is its own pubkey — reconstructed here from `pubkey`
+ * rather than read from the data.
+ *
+ * @param pubkey - The account's base58 address (also the channel identity).
+ * @param data - The raw account data bytes.
+ * @returns The decoded thread node.
+ * @throws If the tag byte is not `TAG_THREAD`.
+ */
 export function decodeThread(pubkey: string, data: Uint8Array): ThreadNodeData {
   const raw = ThreadNodeSchema.deserialize(data)
   if (raw.tag !== TAG_THREAD) throw new Error('Invalid ThreadNode tag')

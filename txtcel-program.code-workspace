@@ -1,0 +1,26 @@
+{
+	"folders": [
+		{
+			"path": "../txtcel-program"
+		},
+		{
+			"path": "."
+		},
+		{
+			"path": "../txtcel-admin"
+		},
+		{
+			"path": "../txtcel-client"
+		},
+		{
+			"path": "../txtcel-deploy"
+		},
+		{
+			"path": "../unknown"
+		},
+		{
+			"path": "../txtcel-mcp"
+		}
+	],
+	"settings": {}
+}
